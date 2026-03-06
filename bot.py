@@ -408,19 +408,28 @@ async def cache_msg(message: Message):
     bcid = message.business_connection_id
     if not bcid: return
     owner_id = owner_by_bcid(bcid)
-    logger.info(f"business_message bcid={bcid} owner={owner_id} from={get_name(message.from_user)}")
     if not owner_id: return
 
-    chat_name = get_chat_name(message.chat)
+    from_name = get_name(message.from_user)
+    chat_name = get_chat_name(message.chat) or "Диалог"
+    text_preview = (message.text or message.caption or f"[{get_media(message)[0] or 'медиа'}]")[:100]
+
+    # ── ЛОГ С ТЕКСТОМ СООБЩЕНИЯ ──
+    logger.info(
+        f"💬 MSG | owner={owner_id} | "
+        f"chat={chat_name} | "
+        f"from={from_name} | "
+        f"text={text_preview}"
+    )
 
     if message.text in (".", "·", "+", "save", "сохр") and message.reply_to_message:
-        reply     = message.reply_to_message
-        from_name = get_name(reply.from_user)
-        caption   = (
+        reply   = message.reply_to_message
+        r_name  = get_name(reply.from_user)
+        caption = (
             f"⏱ <b>Медиа с таймером сохранено</b>\n"
             f"┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n"
-            f"👤 <b>{from_name}</b>\n"
-            f"💬 {chat_name or 'Диалог'}\n"
+            f"👤 <b>{r_name}</b>\n"
+            f"💬 {chat_name}\n"
             f"🕐 {fmt(datetime.now().isoformat())}"
         )
         try:
@@ -457,7 +466,7 @@ async def cache_msg(message: Message):
     mt, fid = get_media(message)
     await save_msg(bcid, owner_id, message.chat.id, message.message_id,
         message.from_user.id if message.from_user else 0,
-        get_name(message.from_user), chat_name,
+        from_name, chat_name,
         message.text or message.caption, mt, fid)
 
 @router.deleted_business_messages()
@@ -471,14 +480,18 @@ async def on_deleted(event: BusinessMessagesDeleted, bot: Bot):
             logger.warning(f"Сообщение {mid} не в кэше")
             continue
         await inc_deleted(owner_id)
+
         name      = c["from_name"] or "?"
         chat_name = c.get("chat_name") or "Диалог"
         text      = c["text"]
         mt        = c["media_type"]
         fid       = c["file_id"]
-        header    = f"🗑 <b>{name} удалил(а) сообщение:</b>\n\n"
-        body      = f"<blockquote>{text}</blockquote>" if text else (f"{media_emoji(mt)} <i>[{mt}]</i>" if mt else "<i>[пустое]</i>")
-        footer    = f"\n\n💬 {chat_name}  🕐 <i>{fmt(c['date'])}</i>"
+
+        logger.info(f"🗑 DEL | owner={owner_id} | chat={chat_name} | from={name} | text={str(text or mt or '')[:100]}")
+
+        header = f"🗑 <b>{name} удалил(а) сообщение:</b>\n\n"
+        body   = f"<blockquote>{text}</blockquote>" if text else (f"{media_emoji(mt)} <i>[{mt}]</i>" if mt else "<i>[пустое]</i>")
+        footer = f"\n\n💬 {chat_name}  🕐 <i>{fmt(c['date'])}</i>"
         try:
             if fid:
                 await send_media_safe(bot, owner_id, mt, fid, header + (text or "") + footer)
@@ -494,11 +507,15 @@ async def on_edited(message: Message, bot: Bot):
     owner_id = owner_by_bcid(bcid)
     if not owner_id: return
     await inc_edited(owner_id)
+
     c         = await get_msg(bcid, message.chat.id, message.message_id)
     old       = c["text"] if c else "—"
     new       = message.text or message.caption or "[медиа]"
     name      = get_name(message.from_user)
     chat_name = get_chat_name(message.chat) or "Диалог"
+
+    logger.info(f"✏️ EDIT | owner={owner_id} | chat={chat_name} | from={name} | old={str(old or '')[:60]} -> new={str(new)[:60]}")
+
     try:
         await bot.send_message(owner_id,
             f"✏️ <b>{name} изменил(а) сообщение:</b>\n\n"
@@ -508,6 +525,7 @@ async def on_edited(message: Message, bot: Bot):
         )
     except Exception as e:
         logger.error(f"on_edited: {e}")
+
     mt, fid = get_media(message)
     await save_msg(bcid, owner_id, message.chat.id, message.message_id,
         message.from_user.id if message.from_user else 0,
@@ -533,8 +551,8 @@ async def main():
             logger.warning(f"Прогрев не удался: {e}")
 
     await bot.set_my_commands([
-        BotCommand(command="start",  description="🚀 Запустить бота"),
-        BotCommand(command="stats",  description="📊 Статистика аккаунта"),
+        BotCommand(command="start", description="🚀 Запустить бота"),
+        BotCommand(command="stats", description="📊 Статистика аккаунта"),
     ])
 
     dp = Dispatcher()
